@@ -16,7 +16,8 @@ RUN npx playwright install --with-deps chromium
 COPY src ./src
 COPY booking.config.example.json ./
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+# Windows checkouts often use CRLF; that breaks the shebang inside Linux containers.
+RUN sed -i 's/\r$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
 
 ENV HEADLESS=false
 ENV DISPLAY=:99
