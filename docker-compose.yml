@@ -22,6 +22,8 @@ services:
   settings:
     build: .
     container_name: el-tennis-booker-settings
+    env_file:
+      - .env
     environment:
       CONFIG_PATH: /app/config/booking.config.json
       SETTINGS_PORT: "8890"
