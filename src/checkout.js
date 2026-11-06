@@ -138,8 +138,19 @@ export function labelForSlot(seconds, step, buttonTexts, apiLabel) {
     if (!best || slot.label.length < best.label.length) best = slot;
   }
   if (best) return { label: best.label, endSeconds: best.endSeconds, booked: false };
-  const fallback = String(apiLabel || "").replace(/\s+/g, " ").trim();
+  const fallbackRaw = String(apiLabel || "").replace(/\s+/g, " ").trim();
+  const fallback =
+    fallbackRaw ||
+    rangeLabel12(seconds, end) ||
+    `${formatHhMm(seconds)} – ${formatHhMm(end)}`;
   return { label: fallback, endSeconds: end, booked: false };
+}
+
+/** 24h HH:MM for labels when the site omits button/API text (Playwright can still see empty buttons). */
+function formatHhMm(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 export async function readTimeButtonTexts(page) {
