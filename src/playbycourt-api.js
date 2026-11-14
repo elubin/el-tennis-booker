@@ -12,24 +12,6 @@ export function bookingApiConfig() {
   return { baseUrl, secret };
 }
 
-export function resolveUser2Id(raw) {
-  const text = raw == null ? "" : String(raw).trim();
-  if (text) {
-    const id = Number(text);
-    if (!Number.isFinite(id) || id <= 0) throw new Error(`Invalid user2Id "${raw}".`);
-    return id;
-  }
-  const fallback = String(process.env.PBP_DEFAULT_USER2_ID || "").trim();
-  if (!fallback) {
-    throw new Error("Pending row has no user2Id. Set PBP_DEFAULT_USER2_ID in the environment.");
-  }
-  const id = Number(fallback);
-  if (!Number.isFinite(id) || id <= 0) {
-    throw new Error("PBP_DEFAULT_USER2_ID must be a positive number.");
-  }
-  return id;
-}
-
 export function normalizePendingRow(row) {
   if (!row || row.id == null) throw new Error("Pending row is missing id.");
   const date = String(row.bookingDate || row.date || "").trim();
@@ -45,13 +27,15 @@ export function normalizePendingRow(row) {
   if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
     throw new Error(`Pending id=${row.id} has invalid duration.`);
   }
-  const user2Name = String(row.user2Name || "").trim() || null;
+  const user2Name = String(row.user2Name || "").trim();
+  if (!user2Name) {
+    throw new Error(`Pending id=${row.id} is missing user2Name.`);
+  }
   return {
     id: row.id,
     date,
     startSeconds: startTime,
     durationMinutes,
-    user2Id: resolveUser2Id(row.user2Id),
     user2Name,
   };
 }

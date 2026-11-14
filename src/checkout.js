@@ -58,8 +58,7 @@ export async function previewCheckout({ bookingUrl, date, surface, seconds, labe
       surface: String(surface).trim(),
       seconds: start,
       label: String(label || "").trim(),
-      playerCount: 2,
-      partnerSearch: partnerSearchTerm({ user2Id: null, user2Name: null }),
+      playerCount: 1,
     });
     log("checkout: stopped on the Book page");
     return "The Book page is open and nothing was booked. Open the live view to see it. Do not click Book or Pay.";
@@ -74,15 +73,10 @@ function uiPlayerCount() {
   return Number.isFinite(raw) && raw >= 1 && raw <= 4 ? raw : 2;
 }
 
-export function partnerSearchTerm({ user2Id, user2Name } = {}) {
+export function requirePartnerName(user2Name) {
   const name = String(user2Name || "").trim();
-  if (name) return name;
-  const fromEnv = String(process.env.PBP_PARTNER_SEARCH_NAME || "").trim();
-  if (fromEnv) return fromEnv;
-  if (user2Id != null && String(user2Id).trim()) return String(user2Id).trim();
-  throw new Error(
-    "Pending row needs user2Name, or set PBP_PARTNER_SEARCH_NAME for the second player search on PlayByPoint.",
-  );
+  if (!name) throw new Error("Pending row is missing user2Name.");
+  return name;
 }
 
 function stepDelayMs() {
@@ -108,9 +102,9 @@ export async function waitForBookingShell(page) {
 }
 
 /** Full wizard through Book/Pay — does not block booking_player (for queue automation). */
-export async function completeBookingViaUI(page, { date, surface, seconds, label, user2Id, user2Name }) {
+export async function completeBookingViaUI(page, { date, surface, seconds, label, user2Name }) {
   const playerCount = uiPlayerCount();
-  const partnerSearch = partnerSearchTerm({ user2Id, user2Name });
+  const partnerSearch = requirePartnerName(user2Name);
   await page.bringToFront();
   await waitForBookingShell(page);
   await driveToCheckout(page, {
@@ -446,7 +440,7 @@ async function typeAndAddPlayer(page, searchName) {
   await field.pressSequentially(name, { delay: 40 });
   const addButton = await addButtonForPlayer(page, name);
   if (!addButton) {
-    throw new Error(`No PlayByPoint user matching "${name}" was in the player search. Set PBP_PARTNER_SEARCH_NAME.`);
+    throw new Error(`No PlayByPoint user matching "${name}" was in the player search.`);
   }
   await addButton.click();
   if (!(await waitForPlayerOnList(page, name))) {

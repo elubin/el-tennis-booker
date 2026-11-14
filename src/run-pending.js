@@ -87,7 +87,6 @@ export async function runPendingBookings() {
           surface: surface.surface,
           seconds: item.startSeconds,
           label: timeLabel,
-          user2Id: item.user2Id,
           user2Name: item.user2Name,
         });
 

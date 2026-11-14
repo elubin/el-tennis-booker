@@ -38,16 +38,6 @@ export async function bookMatchedSlot(page, config, facility, surface, hit, opti
         ? QUEUE_PLAYER_COUNT
         : config.players;
 
-  let userIds = [facility.userId];
-  if (options.user2Id != null) {
-    const partnerId = Number(options.user2Id);
-    if (!Number.isFinite(partnerId) || partnerId <= 0) {
-      throw new Error("Invalid partner user id for booking.");
-    }
-    if (partnerId !== facility.userId) userIds.push(partnerId);
-    userIds = [...new Set(userIds)];
-  }
-
   const payload = {
     reservation: {
       date: hit.date,
@@ -67,7 +57,7 @@ export async function bookMatchedSlot(page, config, facility, surface, hit, opti
       card_details: {},
       coupon: { code: "" },
     },
-    user_ids: userIds,
+    user_ids: [facility.userId],
     user_excluded_ids: [],
     user_ids_guest_names: { player0: { name: null } },
     reservation_fees: [],
