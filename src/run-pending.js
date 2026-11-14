@@ -2,7 +2,7 @@ import { loadQueueConfig, applyFacilityFromPage } from "./config.js";
 import { openSession, ensureLoggedIn, readFacility } from "./session.js";
 import { listCourtTypes } from "./api.js";
 import { findOpenSlot, notifyBooking } from "./booking.js";
-import { completeBookingViaUI, rangeLabel12 } from "./checkout.js";
+import { completeBookingViaUI, rangeLabel12, waitForBookingShell } from "./checkout.js";
 import { listPendingBookings, markBookingComplete } from "./playbycourt-api.js";
 import { formatSeconds } from "./config.js";
 import { log, logSection } from "./logger.js";
@@ -81,6 +81,7 @@ export async function runPendingBookings() {
 
         log(`Pending id=${item.id}: driving checkout UI for ${item.date} ${timeLabel}`);
         await session.page.goto(bookConfig.bookingUrl, { waitUntil: "domcontentloaded", timeout: 120000 });
+        await waitForBookingShell(session.page);
         await completeBookingViaUI(session.page, {
           date: item.date,
           surface: surface.surface,

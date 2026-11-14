@@ -1,6 +1,7 @@
 import { openSession, ensureLoggedIn } from "./session.js";
 import { log } from "./logger.js";
 import { materializeStorageFromEnv } from "./storage-state.js";
+import { waitForAppWithLogging } from "./diagnostics.js";
 
 const PREVIEW_PARTNER = "Eric Placeholder";
 
@@ -82,11 +83,34 @@ function partnerSearchTerm(user2Id) {
   return PREVIEW_PARTNER;
 }
 
+function stepDelayMs() {
+  const n = Number(process.env.PBP_UI_STEP_DELAY_MS || 2500);
+  return Number.isFinite(n) && n >= 0 ? n : 2500;
+}
+
+async function pause(page, label) {
+  const ms = stepDelayMs();
+  if (ms <= 0) return;
+  log(`checkout: waiting ${ms}ms${label ? ` (${label})` : ""}`);
+  await page.waitForTimeout(ms);
+}
+
+export async function waitForBookingShell(page) {
+  await waitForAppWithLogging(page, { timeoutMs: 120000, pollMs: 4000 });
+  await page
+    .locator('[data-react-class="BookBox"]')
+    .first()
+    .waitFor({ state: "attached", timeout: 90000 })
+    .catch(() => {});
+  await pause(page, "booking shell ready");
+}
+
 /** Full wizard through Book/Pay — does not block booking_player (for queue automation). */
 export async function completeBookingViaUI(page, { date, surface, seconds, label, user2Id }) {
   const playerCount = uiPlayerCount();
   const partnerSearch = partnerSearchTerm(user2Id);
   await page.bringToFront();
+  await waitForBookingShell(page);
   await driveToCheckout(page, {
     date,
     surface,
@@ -101,18 +125,25 @@ export async function completeBookingViaUI(page, { date, surface, seconds, label
 
 async function driveToCheckout(page, { date, surface, seconds, label, playerCount = 2, partnerSearch }) {
   await selectDate(page, date);
+  await pause(page, "after date");
   await selectSurface(page, surface);
+  await pause(page, "after surface");
   await selectTime(page, label, seconds);
-  await page.waitForTimeout(800);
+  await pause(page, "after time");
 
   await acceptWaiverIfPresent(page);
+  await pause(page, "after waiver");
   await clickEnabledNext(page);
+  await pause(page, "after first Next");
   await selectPlayerCount(page, playerCount);
   if (playerCount >= 2 && partnerSearch) {
     await openAddUsersSearch(page);
+    await pause(page, "add users open");
     await typeAndAddPlayer(page, partnerSearch);
+    await pause(page, "after partner");
   }
   await clickEnabledNext(page);
+  await pause(page, "before Book page");
   await waitForBookPage(page);
 }
 
@@ -239,22 +270,40 @@ export async function readTimeButtonTexts(page) {
 }
 
 export async function selectDate(page, date) {
+  const deadline = Date.now() + Number(process.env.PBP_UI_DATE_TIMEOUT_MS || 90000);
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      await trySelectDateOnce(page, date);
+      log(`checkout: selected date ${date}`);
+      return;
+    } catch (error) {
+      lastError = error;
+      log(`checkout: date not ready yet, retrying (${error.message})`);
+      await page.waitForTimeout(2000);
+    }
+  }
+  await page.screenshot({ path: "date-select-failed.png", fullPage: true }).catch(() => {});
+  throw lastError || new Error(`Could not select ${date} on the booking page. Nothing was booked.`);
+}
+
+async function trySelectDateOnce(page, date) {
   const hints = dateHints(date);
   const byData = page.locator(`[data-date="${date}"], [data-value="${date}"]`);
   if (await byData.count()) {
     await byData.first().click();
-    log("checkout: selected date");
     return;
   }
+  const monthPatterns = [hints.monthName, hints.monthShort].map(escapeRegex).join("|");
   const labeled = page.getByRole("button", {
     name: new RegExp(
-      `${hints.monthName}\\s+${hints.day}\\b|${hints.weekdayLong}.*\\b${hints.day}\\b|${hints.weekday}.*\\b${hints.day}\\b`,
+      `(${monthPatterns})\\s*\\.?\\s*${hints.day}\\b|${hints.weekdayLong}[,\\s]+.*\\b${hints.day}\\b|${hints.weekday}[,\\s]+.*\\b${hints.day}\\b`,
       "i",
     ),
   });
-  if (await labeled.count()) {
-    await labeled.first().click();
-    log("checkout: selected date");
+  const labeledVisible = labeled.filter({ visible: true });
+  if (await labeledVisible.count()) {
+    await labeledVisible.first().click();
     return;
   }
   const buttons = page.getByRole("button");
@@ -265,15 +314,16 @@ export async function selectDate(page, date) {
     const text = (await button.innerText()).replace(/\s+/g, " ");
     const hasDay = new RegExp(`\\b${hints.day}\\b`).test(text);
     const folded = text.toLowerCase();
-    const hasWeekday = folded.includes(hints.weekday.toLowerCase()) || folded.includes(hints.weekdayLong.toLowerCase());
-    const hasMonth = folded.includes(hints.monthName.toLowerCase());
+    const hasWeekday =
+      folded.includes(hints.weekday.toLowerCase()) || folded.includes(hints.weekdayLong.toLowerCase());
+    const hasMonth =
+      folded.includes(hints.monthName.toLowerCase()) || folded.includes(hints.monthShort.toLowerCase());
     if (hasDay && (hasWeekday || hasMonth)) {
       await button.click();
-      log("checkout: selected date");
       return;
     }
   }
-  throw new Error(`Could not select ${date} on the booking page. Nothing was booked.`);
+  throw new Error(`no matching date control for ${date}`);
 }
 
 export async function selectSurface(page, surface) {
@@ -537,6 +587,7 @@ function dateHints(date) {
     weekday: new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short" }).format(utc),
     weekdayLong: new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long" }).format(utc),
     monthName: new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "long" }).format(utc),
+    monthShort: new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short" }).format(utc),
   };
 }
 
