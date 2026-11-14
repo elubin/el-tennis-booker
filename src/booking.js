@@ -1,5 +1,5 @@
 import { formatSeconds } from "./config.js";
-import { listHours, listCourts, listCards, bookCourt } from "./api.js";
+import { listHours, listCourts, bookCourt } from "./api.js";
 import { normalizeHours, timeStepFrom, matchSlot, dateToUnix } from "./match.js";
 import { log } from "./logger.js";
 
@@ -30,12 +30,6 @@ export async function bookMatchedSlot(page, config, facility, surface, hit, opti
   });
   const court = courts.find((item) => item.available !== false) || courts[0];
   if (!court?.id) throw new Error("A time matched, but no court was returned.");
-
-  const cards = config.paymentMethod === "card" ? await listCards(page) : [];
-  const card = cards.find((item) => item.default) || cards[0];
-  if (config.paymentMethod === "card" && !card?.id) {
-    throw new Error("No saved card was found. Add one on PlayByPoint or set paymentMethod to prepaid.");
-  }
 
   const reservationType =
     options.reservationType != null
@@ -70,9 +64,7 @@ export async function bookMatchedSlot(page, config, facility, surface, hit, opti
       method: config.paymentMethod,
       moment: "now",
       payment_intent_id: "",
-      card_details: card
-        ? { id: card.id, lastFourCardDigits: card.last4, cardBrand: card.brand }
-        : {},
+      card_details: {},
       coupon: { code: "" },
     },
     user_ids: userIds,
