@@ -45,12 +45,14 @@ export function normalizePendingRow(row) {
   if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
     throw new Error(`Pending id=${row.id} has invalid duration.`);
   }
+  const user2Name = String(row.user2Name || "").trim() || null;
   return {
     id: row.id,
     date,
     startSeconds: startTime,
     durationMinutes,
     user2Id: resolveUser2Id(row.user2Id),
+    user2Name,
   };
 }
 

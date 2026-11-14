@@ -88,6 +88,7 @@ export async function runPendingBookings() {
           seconds: item.startSeconds,
           label: timeLabel,
           user2Id: item.user2Id,
+          user2Name: item.user2Name,
         });
 
         await markBookingComplete(item.id);

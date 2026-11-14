@@ -8,13 +8,20 @@ if (resolveUser2Id(null) !== 27186) throw new Error("resolveUser2Id(null) should
 if (resolveUser2Id("337946") !== 337946) throw new Error("resolveUser2Id should parse string ids");
 
 const row = normalizePendingRow({
-  id: 57,
+  id: 59,
   bookingDate: "2026-11-16",
   startTime: 66600,
   endTime: 72000,
   user2Id: null,
+  user2Name: "Player Two",
 });
-if (row.durationMinutes !== 90 || row.startSeconds !== 66600 || row.date !== "2026-11-16" || row.user2Id !== 27186) {
+if (
+  row.durationMinutes !== 90 ||
+  row.startSeconds !== 66600 ||
+  row.date !== "2026-11-16" ||
+  row.user2Id !== 27186 ||
+  row.user2Name !== "Player Two"
+) {
   throw new Error("normalizePendingRow sample row mismatch");
 }
 
