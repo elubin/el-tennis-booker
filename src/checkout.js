@@ -72,8 +72,8 @@ export async function previewCheckout({ bookingUrl, date, surface, seconds, labe
 }
 
 function uiPlayerCount() {
-  const raw = Number(process.env.PBP_UI_PLAYER_COUNT || 4);
-  return Number.isFinite(raw) && raw >= 1 && raw <= 4 ? raw : 4;
+  const raw = Number(process.env.PBP_UI_PLAYER_COUNT || 2);
+  return Number.isFinite(raw) && raw >= 1 && raw <= 4 ? raw : 2;
 }
 
 function partnerSearchTerm(user2Id) {
