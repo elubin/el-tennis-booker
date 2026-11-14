@@ -2,7 +2,7 @@ import { openSession, ensureLoggedIn } from "./session.js";
 import { log } from "./logger.js";
 import { materializeStorageFromEnv } from "./storage-state.js";
 
-const SECOND_PLAYER = "Eric Placeholder";
+const PREVIEW_PARTNER = "Eric Placeholder";
 
 let previewSession = null;
 
@@ -59,6 +59,8 @@ export async function previewCheckout({ bookingUrl, date, surface, seconds, labe
       surface: String(surface).trim(),
       seconds: start,
       label: String(label || "").trim(),
+      playerCount: 2,
+      partnerSearch: PREVIEW_PARTNER,
     });
     log("checkout: stopped on the Book page");
     return "The Book page is open and nothing was booked. Open the live view to see it. Do not click Book or Pay.";
@@ -68,7 +70,36 @@ export async function previewCheckout({ bookingUrl, date, surface, seconds, labe
   }
 }
 
-async function driveToCheckout(page, { date, surface, seconds, label }) {
+function uiPlayerCount() {
+  const raw = Number(process.env.PBP_UI_PLAYER_COUNT || 4);
+  return Number.isFinite(raw) && raw >= 1 && raw <= 4 ? raw : 4;
+}
+
+function partnerSearchTerm(user2Id) {
+  const fromEnv = String(process.env.PBP_PARTNER_SEARCH_NAME || "").trim();
+  if (fromEnv) return fromEnv;
+  if (user2Id != null && String(user2Id).trim()) return String(user2Id).trim();
+  return PREVIEW_PARTNER;
+}
+
+/** Full wizard through Book/Pay — does not block booking_player (for queue automation). */
+export async function completeBookingViaUI(page, { date, surface, seconds, label, user2Id }) {
+  const playerCount = uiPlayerCount();
+  const partnerSearch = partnerSearchTerm(user2Id);
+  await page.bringToFront();
+  await driveToCheckout(page, {
+    date,
+    surface,
+    seconds,
+    label,
+    playerCount,
+    partnerSearch,
+  });
+  await submitBookAndPay(page);
+  log("checkout: booking submit finished");
+}
+
+async function driveToCheckout(page, { date, surface, seconds, label, playerCount = 2, partnerSearch }) {
   await selectDate(page, date);
   await selectSurface(page, surface);
   await selectTime(page, label, seconds);
@@ -76,11 +107,52 @@ async function driveToCheckout(page, { date, surface, seconds, label }) {
 
   await acceptWaiverIfPresent(page);
   await clickEnabledNext(page);
-  await selectTwoUsers(page);
-  await openAddUsersSearch(page);
-  await typeAndAddPlayer(page);
+  await selectPlayerCount(page, playerCount);
+  if (playerCount >= 2 && partnerSearch) {
+    await openAddUsersSearch(page);
+    await typeAndAddPlayer(page, partnerSearch);
+  }
   await clickEnabledNext(page);
   await waitForBookPage(page);
+}
+
+async function submitBookAndPay(page) {
+  const postPromise = page
+    .waitForResponse(
+      (response) => /\/booking_player\b/.test(response.url()) && response.request().method() === "POST",
+      { timeout: 120000 },
+    )
+    .catch(() => null);
+
+  const book = page.locator("button.ui.button, div.ui.button").filter({ hasText: /^\s*book\s*$/i });
+  await book.filter({ visible: true }).first().click();
+  log("checkout: clicked Book");
+
+  const pay = page
+    .getByRole("button", { name: /^(pay|pay now|confirm|complete)$/i })
+    .or(page.locator("button.ui.button, div.ui.button").filter({ hasText: /^\s*pay\b/i }));
+  try {
+    await pay.filter({ visible: true }).first().waitFor({ state: "visible", timeout: 15000 });
+    await pay.filter({ visible: true }).first().click();
+    log("checkout: clicked Pay");
+  } catch {
+    /* single-step Book may post booking_player without a separate Pay */
+  }
+
+  const response = await postPromise;
+  if (!response) {
+    throw new Error("No booking response arrived within two minutes. Check the live view.");
+  }
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = await response.text().catch(() => "");
+  }
+  if (response.status() >= 400) {
+    throw new Error(`Booking failed (${response.status()}): ${JSON.stringify(body)}`);
+  }
+  return body;
 }
 
 const SLOT_RANGE =
@@ -262,18 +334,18 @@ async function acceptWaiverIfPresent(page) {
   }
 }
 
-async function selectTwoUsers(page) {
+async function selectPlayerCount(page, count) {
   const heading = page.getByRole("heading", { name: /^number of /i });
   try {
     await heading.first().waitFor({ state: "visible", timeout: 8000 });
   } catch {
-    throw new Error("Could not select 2 users. Nothing was booked.");
+    throw new Error(`Could not select ${count} users. Nothing was booked.`);
   }
-  const choice = page.locator("button.ButtonOption", { hasText: /^2$/ });
+  const choice = page.locator("button.ButtonOption", { hasText: new RegExp(`^${count}$`) });
   const target = await firstVisible(choice);
-  if (!target) throw new Error("Could not select 2 users. Nothing was booked.");
+  if (!target) throw new Error(`Could not select ${count} users. Nothing was booked.`);
   await target.click();
-  log("checkout: selected two users");
+  log(`checkout: selected ${count} users`);
   await page.waitForTimeout(400);
 }
 
@@ -290,18 +362,20 @@ async function openAddUsersSearch(page) {
   }
 }
 
-async function typeAndAddPlayer(page) {
+async function typeAndAddPlayer(page, searchName) {
+  const name = String(searchName || "").trim();
+  if (!name) throw new Error("No partner search name was configured.");
   const field = visibleSearchField(page).first();
   await field.click();
   await field.fill("");
-  await field.pressSequentially(SECOND_PLAYER, { delay: 40 });
-  const addButton = await addButtonForPlayer(page);
+  await field.pressSequentially(name, { delay: 40 });
+  const addButton = await addButtonForPlayer(page, name);
   if (!addButton) {
-    throw new Error(`No PlayByPoint user named ${SECOND_PLAYER} was in the player search. Nothing was booked.`);
+    throw new Error(`No PlayByPoint user matching "${name}" was in the player search. Set PBP_PARTNER_SEARCH_NAME.`);
   }
   await addButton.click();
-  if (!(await waitForPlayerOnList(page))) {
-    throw new Error(`Could not add ${SECOND_PLAYER} as the second player. Nothing was booked.`);
+  if (!(await waitForPlayerOnList(page, name))) {
+    throw new Error(`Could not add ${name} as the second player. Nothing was booked.`);
   }
   log("checkout: added second player");
 }
@@ -376,7 +450,7 @@ function visibleSearchField(page) {
   return searchField(page).filter({ visible: true });
 }
 
-async function addButtonForPlayer(page) {
+async function addButtonForPlayer(page, searchName) {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
     const buttons = page.getByRole("button", { name: /^add$/i });
@@ -393,7 +467,7 @@ async function addButtonForPlayer(page) {
           scope = scope.parentElement;
         }
         return null;
-      }, SECOND_PLAYER);
+      }, searchName);
       if (near == null) continue;
       if (!best || near < best.near) best = { button, near };
     }
@@ -403,16 +477,16 @@ async function addButtonForPlayer(page) {
   return null;
 }
 
-async function waitForPlayerOnList(page) {
+async function waitForPlayerOnList(page, searchName) {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
-    if (await nameOnPlayerList(page)) return true;
+    if (await nameOnPlayerList(page, searchName)) return true;
     await page.waitForTimeout(200);
   }
   return false;
 }
 
-async function nameOnPlayerList(page) {
+async function nameOnPlayerList(page, searchName) {
   return page.evaluate((name) => {
     const normalized = name.toLowerCase();
     const visible = (node) => node.getClientRects().length > 0;
@@ -436,7 +510,7 @@ async function nameOnPlayerList(page) {
       const text = textOf(node);
       return text.length <= 120 && text.toLowerCase().includes(normalized);
     });
-  }, SECOND_PLAYER);
+  }, searchName);
 }
 
 async function firstVisible(locator) {
@@ -477,7 +551,7 @@ function clockSeconds(hour, minutes, meridiem) {
   return clock * 3600 + minutes * 60;
 }
 
-function rangeLabel12(start, end) {
+export function rangeLabel12(start, end) {
   return `${clock12(start)} – ${clock12(end)}`;
 }
 

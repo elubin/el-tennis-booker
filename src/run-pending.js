@@ -1,7 +1,8 @@
 import { loadQueueConfig, applyFacilityFromPage } from "./config.js";
 import { openSession, ensureLoggedIn, readFacility } from "./session.js";
 import { listCourtTypes } from "./api.js";
-import { findOpenSlot, bookMatchedSlot, notifyBooking } from "./booking.js";
+import { findOpenSlot, notifyBooking } from "./booking.js";
+import { completeBookingViaUI, rangeLabel12 } from "./checkout.js";
 import { listPendingBookings, markBookingComplete } from "./playbycourt-api.js";
 import { formatSeconds } from "./config.js";
 import { log, logSection } from "./logger.js";
@@ -18,11 +19,11 @@ function pickSurface(courtTypes, wanted) {
 }
 
 /**
- * Fetch pending rows from PlayByCourt API, book on PlayByPoint when slots are open,
+ * Fetch pending rows from PlayByCourt API, book on PlayByPoint via the checkout UI,
  * mark completed in the API. Does not start Chromium when the queue is empty.
  */
 export async function runPendingBookings() {
-  logSection("run pending bookings");
+  logSection("run pending bookings (UI)");
   let pending;
   try {
     pending = await listPendingBookings();
@@ -39,7 +40,7 @@ export async function runPendingBookings() {
     return { startedBrowser: false, results: [], message: "No pending bookings." };
   }
 
-  let bookConfig = { ...loadQueueConfig(), dryRun: false };
+  let bookConfig = { ...loadQueueConfig(), dryRun: false, headless: false };
   materializeStorageFromEnv();
 
   const results = [];
@@ -60,7 +61,9 @@ export async function runPendingBookings() {
     const surface = pickSurface(courtTypes, surfaceWanted);
 
     for (const item of pending) {
+      const endSeconds = item.startSeconds + item.durationMinutes * 60;
       const label = `${item.date} ${formatSeconds(item.startSeconds)}`;
+      const timeLabel = rangeLabel12(item.startSeconds, endSeconds);
       try {
         const hit = await findOpenSlot(session.page, bookConfig, facility, surface, {
           date: item.date,
@@ -76,18 +79,22 @@ export async function runPendingBookings() {
           continue;
         }
 
-        const { label: bookedLabel } = await bookMatchedSlot(session.page, bookConfig, facility, surface, hit, {
-          twoPlayers: true,
-          reservationType: 2,
+        log(`Pending id=${item.id}: driving checkout UI for ${item.date} ${timeLabel}`);
+        await session.page.goto(bookConfig.bookingUrl, { waitUntil: "domcontentloaded", timeout: 120000 });
+        await completeBookingViaUI(session.page, {
+          date: item.date,
+          surface: surface.surface,
+          seconds: item.startSeconds,
+          label: timeLabel,
           user2Id: item.user2Id,
         });
 
         await markBookingComplete(item.id);
-        await notifyBooking(bookConfig, `Booked (queue id=${item.id}) ${hit.date} ${bookedLabel}.`);
+        await notifyBooking(bookConfig, `Booked (queue id=${item.id}) ${item.date} ${timeLabel}.`);
         results.push({
           id: item.id,
           status: "booked",
-          detail: `${hit.date} ${bookedLabel}`,
+          detail: `${item.date} ${timeLabel}`,
         });
       } catch (error) {
         log(`Pending id=${item.id} failed: ${error.message}`);
