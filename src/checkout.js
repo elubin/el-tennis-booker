@@ -287,8 +287,31 @@ export async function selectDate(page, date) {
   throw lastError || new Error(`Could not select ${date} on the booking page. Nothing was booked.`);
 }
 
+function compactDateChipLabel(date, timeZone = process.env.TZ || "America/New_York") {
+  const [year, month, day] = date.split("-").map(Number);
+  const utcGuess = Date.UTC(year, month - 1, day, 12, 0, 0);
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" })
+    .format(new Date(utcGuess))
+    .replace(/\./g, "")
+    .toUpperCase()
+    .slice(0, 3);
+  return `${weekday} ${day}`;
+}
+
 async function trySelectDateOnce(page, date) {
   const hints = dateHints(date);
+  const chip = compactDateChipLabel(date);
+  const chipPattern = new RegExp(`^\\s*${escapeRegex(chip)}\\s*$`, "i");
+  const chipButton = page
+    .getByRole("button", { name: chipPattern })
+    .or(page.locator("button.ButtonOption, button").filter({ hasText: chipPattern }));
+  const chipVisible = chipButton.filter({ visible: true });
+  if (await chipVisible.count()) {
+    await chipVisible.first().click();
+    log(`checkout: selected date chip ${chip}`);
+    return;
+  }
+
   const byData = page.locator(`[data-date="${date}"], [data-value="${date}"]`);
   if (await byData.count()) {
     await byData.first().click();
