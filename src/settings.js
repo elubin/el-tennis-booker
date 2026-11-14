@@ -250,7 +250,9 @@ function escapeHtml(value) {
 
 function send(res, status, body) {
   const html = String(body).startsWith("<!");
-  res.writeHead(status, { "Content-Type": html ? "text/html; charset=utf-8" : "text/plain; charset=utf-8" });
+  const headers = { "Content-Type": html ? "text/html; charset=utf-8" : "text/plain; charset=utf-8" };
+  if (html) headers["Cache-Control"] = "no-store";
+  res.writeHead(status, headers);
   res.end(body);
 }
 
