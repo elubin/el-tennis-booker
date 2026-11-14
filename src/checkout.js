@@ -3,8 +3,6 @@ import { log } from "./logger.js";
 import { materializeStorageFromEnv } from "./storage-state.js";
 import { waitForAppWithLogging } from "./diagnostics.js";
 
-const PREVIEW_PARTNER = "Eric Placeholder";
-
 let previewSession = null;
 
 export async function closePreviewSession() {
@@ -61,7 +59,7 @@ export async function previewCheckout({ bookingUrl, date, surface, seconds, labe
       seconds: start,
       label: String(label || "").trim(),
       playerCount: 2,
-      partnerSearch: PREVIEW_PARTNER,
+      partnerSearch: partnerSearchTerm(null),
     });
     log("checkout: stopped on the Book page");
     return "The Book page is open and nothing was booked. Open the live view to see it. Do not click Book or Pay.";
@@ -76,11 +74,11 @@ function uiPlayerCount() {
   return Number.isFinite(raw) && raw >= 1 && raw <= 4 ? raw : 2;
 }
 
-function partnerSearchTerm(user2Id) {
+export function partnerSearchTerm(user2Id) {
   const fromEnv = String(process.env.PBP_PARTNER_SEARCH_NAME || "").trim();
   if (fromEnv) return fromEnv;
   if (user2Id != null && String(user2Id).trim()) return String(user2Id).trim();
-  return PREVIEW_PARTNER;
+  throw new Error("Set PBP_PARTNER_SEARCH_NAME for the second player search on PlayByPoint.");
 }
 
 function stepDelayMs() {
