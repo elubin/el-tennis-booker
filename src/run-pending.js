@@ -1,4 +1,4 @@
-import { loadConfig } from "./config.js";
+import { loadQueueConfig, applyFacilityFromPage } from "./config.js";
 import { openSession, ensureLoggedIn, readFacility } from "./session.js";
 import { listCourtTypes } from "./api.js";
 import { findOpenSlot, bookMatchedSlot, notifyBooking } from "./booking.js";
@@ -39,8 +39,7 @@ export async function runPendingBookings() {
     return { startedBrowser: false, results: [], message: "No pending bookings." };
   }
 
-  const config = loadConfig();
-  const bookConfig = { ...config, dryRun: false };
+  let bookConfig = { ...loadQueueConfig(), dryRun: false };
   materializeStorageFromEnv();
 
   const results = [];
@@ -50,8 +49,15 @@ export async function runPendingBookings() {
     const facility = await readFacility(session.page);
     if (!facility?.userId) throw new Error("Signed in, but the booking page did not expose a user.");
 
+    bookConfig = applyFacilityFromPage(bookConfig, facility);
+    if (!bookConfig.facilityId) {
+      throw new Error("facilityId missing. Set PBP_FACILITY_ID or ensure the booking page exposes a facility.");
+    }
+
     const courtTypes = await listCourtTypes(session.page, bookConfig.facilityId, bookConfig.kind);
-    const surface = pickSurface(courtTypes, bookConfig.surface);
+    const surfaceWanted = bookConfig.surface || courtTypes[0]?.surface;
+    if (!surfaceWanted) throw new Error("Set PBP_SURFACE or add surface in booking.config.json.");
+    const surface = pickSurface(courtTypes, surfaceWanted);
 
     for (const item of pending) {
       const label = `${item.date} ${formatSeconds(item.startSeconds)}`;

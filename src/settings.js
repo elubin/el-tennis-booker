@@ -1,5 +1,5 @@
 import { createServer, request as httpRequest } from "node:http";
-import { resolveBookingUrl, readConfigFile } from "./config.js";
+import { resolveBookingUrl, facilitySlugFromBookingUrl } from "./config.js";
 import { lookupAvailability } from "./lookup.js";
 import { closePreviewSession, previewCheckout } from "./checkout.js";
 import { runPendingBookings, formatPendingSummary } from "./run-pending.js";
@@ -99,12 +99,12 @@ server.listen(port, "0.0.0.0", () => {
 
 function facilityHint() {
   try {
-    const file = readConfigFile();
-    const slug = String(file.facilitySlug || "").trim();
+    const url = resolveBookingUrl();
+    const slug = facilitySlugFromBookingUrl(url);
     if (slug) return `Configured facility: ${slug}`;
     return "Using configured PlayByPoint facility.";
   } catch {
-    return "Set PBP_BOOKING_URL or booking.config.json for PlayByPoint.";
+    return "Set PBP_BOOKING_URL in the container environment.";
   }
 }
 

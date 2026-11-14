@@ -1,6 +1,6 @@
 # OpenMediaVault / Portainer: deploy this whole file as a stack.
 # Set PBP_EMAIL and PBP_PASSWORD in the stack Environment (or a .env file next to this compose).
-# Court preferences live in ./config/booking.config.json. Queue API + facility URL: .env (BOOKING_API_*, PBP_BOOKING_URL, PBP_DEFAULT_USER2_ID).
+# Optional ./config/booking.config.json for watch/slots. Queue mode can use .env only: PBP_BOOKING_URL, PBP_SURFACE, PBP_PAYMENT_METHOD, BOOKING_API_*.
 
 services:
   booker:

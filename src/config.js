@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -7,13 +7,27 @@ export function configPath() {
   return resolve(process.env.CONFIG_PATH || "booking.config.json");
 }
 
-export function readConfigFile() {
+export function facilitySlugFromBookingUrl(url) {
+  const match = String(url || "").match(/\/book\/([^/?#]+)/i);
+  return match ? match[1] : "";
+}
+
+export function readConfigFileOptional() {
   const path = configPath();
+  if (!existsSync(path)) return {};
   try {
     return JSON.parse(readFileSync(path, "utf8"));
   } catch (error) {
-    throw new Error(`Could not read ${path}. (${error.message})`);
+    throw new Error(`Could not parse ${path}. (${error.message})`);
   }
+}
+
+export function readConfigFile() {
+  const path = configPath();
+  if (!existsSync(path)) {
+    throw new Error(`Could not read ${path}. (${error.code || "ENOENT"})`);
+  }
+  return readConfigFileOptional();
 }
 
 /** PlayByPoint booking page URL from env, config file, or facility slug. */
@@ -21,7 +35,7 @@ export function resolveBookingUrl(file = null) {
   const envUrl = String(process.env.PBP_BOOKING_URL || "").trim();
   if (envUrl) return envUrl;
 
-  const data = file ?? readConfigFile();
+  const data = file ?? readConfigFileOptional();
   const fromFile = String(data.bookingUrl || "").trim();
   if (fromFile) return fromFile;
 
@@ -33,14 +47,50 @@ export function resolveBookingUrl(file = null) {
   );
 }
 
-export function loadConfig() {
+function envText(name) {
+  return String(process.env[name] || "").trim();
+}
+
+function envNumber(name) {
+  const raw = envText(name);
+  if (!raw) return null;
+  const number = Number(raw);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+function mergeFileWithEnv(file) {
+  const bookingUrl = resolveBookingUrl(file);
+  const slug =
+    String(file.facilitySlug || "").trim() || facilitySlugFromBookingUrl(bookingUrl) || envText("PBP_FACILITY_SLUG");
+  return {
+    ...file,
+    facilitySlug: slug,
+    facilityId: file.facilityId ?? envNumber("PBP_FACILITY_ID") ?? null,
+    timeZone: String(file.timeZone || "").trim() || envText("PBP_TIMEZONE") || "America/New_York",
+    surface: String(file.surface || "").trim() || envText("PBP_SURFACE"),
+    paymentMethod: String(file.paymentMethod || "").trim() || envText("PBP_PAYMENT_METHOD"),
+    players: file.players ?? envNumber("PBP_PLAYERS") ?? 2,
+    daysAhead: file.daysAhead ?? envNumber("PBP_DAYS_AHEAD") ?? 3,
+    kind: file.kind || "reservation",
+    dryRun: file.dryRun !== false,
+    pollIntervalSeconds: file.pollIntervalSeconds ?? 20,
+    slots: Array.isArray(file.slots) ? file.slots : [],
+    bookingUrl,
+  };
+}
+
+/**
+ * @param {{ requireSlots?: boolean }} options
+ * requireSlots false — queue / pending (PBP_BOOKING_URL + payment/surface env ok without JSON file)
+ */
+export function loadConfig(options = {}) {
+  const requireSlots = options.requireSlots !== false;
   const path = configPath();
-  let file;
-  try {
-    file = JSON.parse(readFileSync(path, "utf8"));
-  } catch (error) {
+  const file = readConfigFileOptional();
+
+  if (!existsSync(path) && !envText("PBP_BOOKING_URL") && !String(file.facilitySlug || "").trim()) {
     throw new Error(
-      `Could not read ${path}. Open the settings page and save a booking config. (${error.message})`,
+      `Missing ${path}. Set PBP_BOOKING_URL (and PBP_SURFACE, PBP_PAYMENT_METHOD) in the environment, or create booking.config.json on the config volume.`,
     );
   }
 
@@ -51,7 +101,7 @@ export function loadConfig() {
   }
 
   return {
-    ...bookingFromFile(file),
+    ...bookingFromFile(mergeFileWithEnv(file), { requireSlots }),
     email,
     password,
     notifyWebhook: process.env.NOTIFY_WEBHOOK || "",
@@ -59,13 +109,32 @@ export function loadConfig() {
   };
 }
 
-export function bookingFromFile(file) {
-  const facilitySlug = requiredText(file.facilitySlug, "facilitySlug");
-  const facilityId = requiredNumber(file.facilityId, "facilityId");
+/** Queue automation: slots[] not required; facility id can come from the booking page after login. */
+export function loadQueueConfig() {
+  return loadConfig({ requireSlots: false });
+}
+
+export function bookingFromFile(file, { requireSlots = true } = {}) {
+  const bookingUrl = file.bookingUrl || resolveBookingUrl(file);
+  const facilitySlug =
+    String(file.facilitySlug || "").trim() ||
+    facilitySlugFromBookingUrl(bookingUrl) ||
+    requiredText("", "facilitySlug (set PBP_BOOKING_URL or facilitySlug)");
+
+  const facilityIdFromFile = file.facilityId;
+  let facilityId = facilityIdFromFile != null && facilityIdFromFile !== "" ? Number(facilityIdFromFile) : null;
+  if (facilityId != null && (!Number.isFinite(facilityId) || facilityId <= 0)) facilityId = null;
+
   const timeZone = requiredText(file.timeZone, "timeZone");
-  const surface = requiredText(file.surface, "surface");
+  const surface = requiredText(
+    file.surface,
+    requireSlots ? "surface" : "surface (set PBP_SURFACE or booking.config.json)",
+  );
   const players = requiredNumber(file.players, "players");
-  const paymentMethod = requiredText(file.paymentMethod, "paymentMethod");
+  const paymentMethod = requiredText(
+    file.paymentMethod,
+    requireSlots ? "paymentMethod" : "paymentMethod (set PBP_PAYMENT_METHOD to card or prepaid)",
+  );
   if (!["card", "prepaid"].includes(paymentMethod)) {
     throw new Error('paymentMethod must be "card" or "prepaid".');
   }
@@ -89,8 +158,12 @@ export function bookingFromFile(file) {
     return { weekday, start, startSeconds, durationMinutes };
   });
 
-  if (slots.length === 0) {
-    throw new Error("Add at least one preferred slot.");
+  if (requireSlots && slots.length === 0) {
+    throw new Error("Add at least one preferred slot in booking.config.json (not needed for queue-only runs).");
+  }
+
+  if (requireSlots) {
+    facilityId = requiredNumber(facilityId, "facilityId");
   }
 
   return {
@@ -105,19 +178,19 @@ export function bookingFromFile(file) {
     pollIntervalSeconds,
     daysAhead,
     slots,
-    bookingUrl: resolveBookingUrl(file),
+    bookingUrl,
     signInUrl: "https://app.playbypoint.com/users/sign_in",
   };
 }
 
 function requiredText(value, label) {
   const text = String(value ?? "").trim();
-  if (!text) throw new Error(`Set ${label} in the settings page.`);
+  if (!text) throw new Error(`Set ${label}.`);
   return text;
 }
 
 function requiredNumber(value, label) {
-  if (value == null || value === "") throw new Error(`Set ${label} in the settings page.`);
+  if (value == null || value === "") throw new Error(`Set ${label}.`);
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) throw new Error(`${label} must be a positive number.`);
   return number;
@@ -136,4 +209,13 @@ export function formatSeconds(seconds) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+/** Apply ids read from the live booking page when config/env omit facilityId. */
+export function applyFacilityFromPage(config, facility) {
+  if (!facility) return config;
+  const next = { ...config };
+  if (!next.facilityId && facility.facilityId) next.facilityId = facility.facilityId;
+  if (facility.timeZone) next.timeZone = facility.timeZone;
+  return next;
 }
