@@ -1,5 +1,5 @@
-import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
@@ -31,6 +31,49 @@ export function readConfigFile() {
 }
 
 /** PlayByPoint booking page URL from env, config file, or facility slug. */
+/**
+ * If booking.config.json is missing, create it from PBP_* env (never overwrites an existing file).
+ */
+export function materializeBookingConfigFromEnv() {
+  const path = configPath();
+  if (existsSync(path)) {
+    return { created: false, path };
+  }
+
+  const url = envText("PBP_BOOKING_URL");
+  const surface = envText("PBP_SURFACE");
+  const paymentMethod = envText("PBP_PAYMENT_METHOD").toLowerCase();
+  if (!url || !surface || !paymentMethod) {
+    return { created: false, path, reason: "Set PBP_BOOKING_URL, PBP_SURFACE, and PBP_PAYMENT_METHOD to auto-create config." };
+  }
+  if (!["card", "prepaid"].includes(paymentMethod)) {
+    throw new Error('PBP_PAYMENT_METHOD must be "card" or "prepaid".');
+  }
+
+  const slug = facilitySlugFromBookingUrl(url);
+  if (!slug) {
+    throw new Error("PBP_BOOKING_URL must look like https://app.playbypoint.com/book/yourclub");
+  }
+
+  const body = {
+    facilitySlug: slug,
+    facilityId: envNumber("PBP_FACILITY_ID"),
+    timeZone: envText("PBP_TIMEZONE") || "America/New_York",
+    kind: "reservation",
+    surface,
+    players: envNumber("PBP_PLAYERS") ?? 2,
+    paymentMethod,
+    dryRun: envText("PBP_DRY_RUN") !== "false",
+    pollIntervalSeconds: Number(envText("PBP_POLL_INTERVAL_SECONDS") || 20) || 20,
+    daysAhead: envNumber("PBP_DAYS_AHEAD") ?? 3,
+    slots: [],
+  };
+
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`, "utf8");
+  return { created: true, path };
+}
+
 export function resolveBookingUrl(file = null) {
   const envUrl = String(process.env.PBP_BOOKING_URL || "").trim();
   if (envUrl) return envUrl;

@@ -1,4 +1,4 @@
-import { loadConfig, formatSeconds } from "./config.js";
+import { loadConfig, formatSeconds, materializeBookingConfigFromEnv } from "./config.js";
 import { openSession, ensureLoggedIn, readFacility } from "./session.js";
 import { listCourtTypes, listHours } from "./api.js";
 import { upcomingDates, normalizeHours, timeStepFrom, matchSlot, dateToUnix } from "./match.js";
@@ -13,6 +13,7 @@ const command = process.argv[2] || "check";
 const COMMANDS = ["login", "check", "once", "watch", "book", "export-session", "pending"];
 
 async function main() {
+  materializeBookingConfigFromEnv();
   logSection(`Start command=${command}`);
   logEnv();
 

@@ -1,5 +1,5 @@
 import { createServer, request as httpRequest } from "node:http";
-import { resolveBookingUrl, facilitySlugFromBookingUrl } from "./config.js";
+import { resolveBookingUrl, facilitySlugFromBookingUrl, materializeBookingConfigFromEnv } from "./config.js";
 import { lookupAvailability } from "./lookup.js";
 import { closePreviewSession, previewCheckout } from "./checkout.js";
 import { runPendingBookings, formatPendingSummary } from "./run-pending.js";
@@ -92,6 +92,8 @@ server.on("upgrade", (req, socket, head) => {
   proxy.on("error", () => socket.destroy());
   proxy.end();
 });
+
+materializeBookingConfigFromEnv();
 
 server.listen(port, "0.0.0.0", () => {
   console.log(`Settings page listening on ${port}`);

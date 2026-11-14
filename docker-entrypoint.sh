@@ -8,4 +8,6 @@ sleep 0.5
 x11vnc -display :99 -forever -shared -nopw -localhost -rfbport 5900 >/tmp/x11vnc.log 2>&1 &
 websockify --web /usr/share/novnc 127.0.0.1:6080 localhost:5900 >/tmp/websockify.log 2>&1 &
 
+node src/materialize-config.js >/tmp/materialize-config.log 2>&1 || true
+
 exec "$@"
