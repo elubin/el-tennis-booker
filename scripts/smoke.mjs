@@ -1,5 +1,31 @@
 import { bookingUrlFromInput, openSlots } from "../src/lookup.js";
 import { openSession } from "../src/session.js";
+import { normalizePendingRow, resolveUser2Id } from "../src/playbycourt-api.js";
+
+process.env.PBP_DEFAULT_USER2_ID = "27186";
+
+if (resolveUser2Id(null) !== 27186) throw new Error("resolveUser2Id(null) should use PBP_DEFAULT_USER2_ID");
+if (resolveUser2Id("337946") !== 337946) throw new Error("resolveUser2Id should parse string ids");
+
+const row = normalizePendingRow({
+  id: 57,
+  bookingDate: "2026-11-16",
+  startTime: 66600,
+  endTime: 72000,
+  user2Id: null,
+});
+if (row.durationMinutes !== 90 || row.startSeconds !== 66600 || row.date !== "2026-11-16" || row.user2Id !== 27186) {
+  throw new Error("normalizePendingRow sample row mismatch");
+}
+
+const row2 = normalizePendingRow({
+  id: 58,
+  bookingDate: "2026-11-16",
+  startTime: 66600,
+  endTime: 72000,
+  user2Id: "337946",
+});
+if (row2.user2Id !== 337946) throw new Error("normalizePendingRow should keep provided user2Id");
 
 const slots = openSlots(
   [

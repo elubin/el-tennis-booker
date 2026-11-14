@@ -1,6 +1,8 @@
 import { createServer, request as httpRequest } from "node:http";
-import { bookingUrlFromInput, lookupAvailability } from "./lookup.js";
+import { resolveBookingUrl, readConfigFile } from "./config.js";
+import { lookupAvailability } from "./lookup.js";
 import { closePreviewSession, previewCheckout } from "./checkout.js";
+import { runPendingBookings, formatPendingSummary } from "./run-pending.js";
 
 const NOVNC_PORT = 6080;
 
@@ -8,7 +10,6 @@ const port = Number(process.env.SETTINGS_PORT || 8890);
 let busy = false;
 
 const server = createServer(async (req, res) => {
-  let bookingUrl = "";
   try {
     const path = pathname(req.url);
     if (path === "/live-view" || path === "/live-view/") {
@@ -20,34 +21,47 @@ const server = createServer(async (req, res) => {
     }
     if (path.startsWith("/live-view/")) return proxyNovnc(req, res);
     if (req.method === "GET" && (path === "/" || path === "/settings" || path === "/settings/")) {
-      return send(res, 200, page("", "", null));
+      return send(res, 200, page("", null));
     }
     if (req.method !== "POST" || (path !== "/" && path !== "/settings")) return send(res, 404, "Not found");
 
     const body = JSON.parse(await readBody(req));
-    bookingUrl = bookingUrlFromInput(body.bookingUrl);
-    if (busy) return send(res, 200, page(bookingUrl, "Already checking a booking page. Wait for it to finish.", null));
+    if (busy) return send(res, 200, page("Already busy. Wait for the current task to finish.", null));
+
     busy = true;
-    try {
+  try {
+      if (body.action === "automate") {
+        const run = await runPendingBookings();
+        const summary = formatPendingSummary(run);
+        return send(res, 200, page(summary, null));
+      }
+
+      const bookingUrl = resolveBookingUrl();
+
       if (body.action === "checkout") {
-        const message = await previewCheckout({
+        const checkoutMessage = await previewCheckout({
           bookingUrl,
           date: body.date,
           surface: body.surface,
           seconds: body.seconds,
           label: body.label,
         });
-        return send(res, 200, page(bookingUrl, message, null));
+        return send(res, 200, page(checkoutMessage, null));
       }
-      await closePreviewSession();
-      const result = await lookupAvailability(bookingUrl);
-      return send(res, 200, page(bookingUrl, "", result));
+
+      if (body.action === "lookup" || !body.action) {
+        await closePreviewSession();
+        const result = await lookupAvailability(bookingUrl);
+        return send(res, 200, page("", result));
+      }
+
+      throw new Error(`Unknown action: ${body.action}`);
     } finally {
       busy = false;
     }
   } catch (error) {
     busy = false;
-    send(res, 200, page(bookingUrl, error.message, null));
+    send(res, 200, page(error.message, null));
   }
 });
 
@@ -83,6 +97,17 @@ server.listen(port, "0.0.0.0", () => {
   console.log(`Settings page listening on ${port}`);
 });
 
+function facilityHint() {
+  try {
+    const file = readConfigFile();
+    const slug = String(file.facilitySlug || "").trim();
+    if (slug) return `Configured facility: ${slug}`;
+    return "Using configured PlayByPoint facility.";
+  } catch {
+    return "Set PBP_BOOKING_URL or booking.config.json for PlayByPoint.";
+  }
+}
+
 function pathname(url) {
   return new URL(url || "/", "http://localhost").pathname;
 }
@@ -114,9 +139,10 @@ function proxyNovnc(req, res) {
   req.pipe(proxy);
 }
 
-function page(bookingUrl, message, result) {
+function page(message, result) {
   const banner = message ? `<p class="banner">${escapeHtml(message)}</p>` : "";
   const times = result ? renderTimes(result) : "";
+  const hint = escapeHtml(facilityHint());
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -125,35 +151,42 @@ function page(bookingUrl, message, result) {
   <title>Available courts</title>
   <style>
     body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 40rem; padding: 0 1rem; color: #1a1a1a; }
-    label { display: block; margin: 0.8rem 0 0.25rem; }
-    input { width: 100%; box-sizing: border-box; padding: 0.55rem 0.6rem; }
-    button { margin-top: 0.8rem; padding: 0.55rem 0.9rem; }
-    .banner { background: #f4f4f4; padding: 0.7rem 0.8rem; }
+    button { margin-top: 0.8rem; margin-right: 0.5rem; padding: 0.55rem 0.9rem; }
+  .banner { background: #f4f4f4; padding: 0.7rem 0.8rem; white-space: pre-wrap; }
     .day { margin-top: 1.2rem; }
     .surface { margin: 0.7rem 0 0.25rem; }
     .slots { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.2rem 0 0.6rem; }
     .slot { margin-top: 0; }
     .booked { display: inline-block; margin-top: 0; padding: 0.55rem 0.9rem; background: #f3d2a6; color: #8a3b00; border: 1px solid #e09a3a; border-radius: 4px; }
+    .actions { margin: 1rem 0; }
   </style>
 </head>
 <body>
-  <h1>Available courts</h1>
-  <p>Paste a PlayByPoint booking link. The container uses the email and password already set in its environment.</p>
+  <h1>Court booking</h1>
+  <p>${hint}. Login uses PBP_EMAIL and PBP_PASSWORD from the container environment.</p>
   <p>If Cloudflare asks you to click a box, open <a href="/live-view">the live view</a> in another tab and click it there. Login cookies stay in the auth folder afterward.</p>
   ${banner}
-  <form id="lookup">
-    <label for="bookingUrl">Booking link</label>
-    <input id="bookingUrl" name="bookingUrl" value="${escapeHtml(bookingUrl)}" placeholder="https://app.playbypoint.com/book/yourclub" required>
-    <button type="submit" id="go">Show available times</button>
-  </form>
+  <div class="actions">
+    <button type="button" id="lookup">Show available times</button>
+    <button type="button" id="automate">Book pending from queue</button>
+  </div>
   ${times}
   <script>
-    document.getElementById("lookup").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const button = document.getElementById("go");
+    document.getElementById("lookup").addEventListener("click", async () => {
+      const button = document.getElementById("lookup");
       button.disabled = true;
+      const auto = document.getElementById("automate");
+      auto.disabled = true;
       button.textContent = "Signing in…";
-      await postAndReplace({ bookingUrl: event.currentTarget.bookingUrl.value });
+      await postAndReplace({ action: "lookup" });
+    });
+    document.getElementById("automate").addEventListener("click", async () => {
+      const button = document.getElementById("automate");
+      button.disabled = true;
+      const lookup = document.getElementById("lookup");
+      lookup.disabled = true;
+      button.textContent = "Booking…";
+      await postAndReplace({ action: "automate" });
     });
     for (const button of document.querySelectorAll(".slot")) {
       button.addEventListener("click", async () => {
@@ -161,7 +194,6 @@ function page(bookingUrl, message, result) {
         button.textContent = "Opening Book page…";
         await postAndReplace({
           action: "checkout",
-          bookingUrl: document.getElementById("bookingUrl").value,
           date: button.dataset.date,
           surface: button.dataset.surface,
           seconds: Number(button.dataset.seconds),
@@ -205,7 +237,7 @@ function renderTimes(result) {
     })
     .join("");
   const next = result.nextOpen ? `<p>Next booking window opens ${escapeHtml(result.nextOpen)}.</p>` : "";
-  return `<h2>Open times</h2><p>Click one open time. The browser sets 2 users, adds Eric Placeholder, and leaves the Book page open. Nothing is booked.</p><p>Facility ${escapeHtml(result.facilityId)}. Times are ${escapeHtml(result.timeZone)}.</p>${next}${days}`;
+  return `<h2>Open times</h2><p>Click one open time for a checkout preview (nothing is booked).</p><p>Facility ${escapeHtml(result.facilityId)}. Times are ${escapeHtml(result.timeZone)}.</p>${next}${days}`;
 }
 
 function escapeHtml(value) {

@@ -11,7 +11,8 @@
     "export-session": "node src/index.js export-session",
     "settings": "node src/settings.js",
     "watch": "node src/index.js watch",
-    "book": "node src/index.js book"
+    "book": "node src/index.js book",
+    "pending": "node src/index.js pending"
   },
   "engines": {
     "node": ">=20"

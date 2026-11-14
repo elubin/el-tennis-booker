@@ -7,6 +7,32 @@ export function configPath() {
   return resolve(process.env.CONFIG_PATH || "booking.config.json");
 }
 
+export function readConfigFile() {
+  const path = configPath();
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new Error(`Could not read ${path}. (${error.message})`);
+  }
+}
+
+/** PlayByPoint booking page URL from env, config file, or facility slug. */
+export function resolveBookingUrl(file = null) {
+  const envUrl = String(process.env.PBP_BOOKING_URL || "").trim();
+  if (envUrl) return envUrl;
+
+  const data = file ?? readConfigFile();
+  const fromFile = String(data.bookingUrl || "").trim();
+  if (fromFile) return fromFile;
+
+  const slug = String(data.facilitySlug || "").trim();
+  if (slug) return `https://app.playbypoint.com/book/${slug}`;
+
+  throw new Error(
+    "Set PBP_BOOKING_URL in the environment, or facilitySlug / bookingUrl in booking.config.json.",
+  );
+}
+
 export function loadConfig() {
   const path = configPath();
   let file;
@@ -79,7 +105,7 @@ export function bookingFromFile(file) {
     pollIntervalSeconds,
     daysAhead,
     slots,
-    bookingUrl: `https://app.playbypoint.com/book/${facilitySlug}`,
+    bookingUrl: resolveBookingUrl(file),
     signInUrl: "https://app.playbypoint.com/users/sign_in",
   };
 }

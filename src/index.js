@@ -1,16 +1,28 @@
 import { loadConfig, formatSeconds } from "./config.js";
 import { openSession, ensureLoggedIn, readFacility } from "./session.js";
-import { listCourtTypes, listHours, listCourts, listCards, bookCourt } from "./api.js";
+import { listCourtTypes, listHours } from "./api.js";
 import { upcomingDates, normalizeHours, timeStepFrom, matchSlot, dateToUnix } from "./match.js";
+import { bookMatchedSlot, notifyBooking } from "./booking.js";
+import { runPendingBookings, formatPendingSummary } from "./run-pending.js";
 import { log, logSection, logEnv, logJson, logError } from "./logger.js";
 import { diagnosePage } from "./diagnostics.js";
 import { materializeStorageFromEnv, encodeStorageFile, STORAGE_PATH } from "./storage-state.js";
 
 const command = process.argv[2] || "check";
 
+const COMMANDS = ["login", "check", "once", "watch", "book", "export-session", "pending"];
+
 async function main() {
   logSection(`Start command=${command}`);
   logEnv();
+
+  if (command === "pending") {
+    const run = await runPendingBookings();
+    log(formatPendingSummary(run));
+    if (run.error) process.exitCode = 1;
+    return;
+  }
+
   const config = command === "watch" ? await waitForConfig() : loadConfig();
   logJson("config (no secrets)", {
     facilitySlug: config.facilitySlug,
@@ -26,8 +38,8 @@ async function main() {
     bookingUrl: config.bookingUrl,
     headless: config.headless,
   });
-  if (!["login", "check", "once", "watch", "book", "export-session"].includes(command)) {
-    throw new Error("Use login, check, once, watch, book, or export-session.");
+  if (!COMMANDS.includes(command)) {
+    throw new Error(`Use ${COMMANDS.join(", ")}.`);
   }
 
   materializeStorageFromEnv();
@@ -62,7 +74,8 @@ async function main() {
         log(`Dry run: would book ${hit.date} ${hit.match.label}. Set dryRun to false to reserve it.`);
         return;
       }
-      await reserve(session.page, config, facility, surface, hit);
+      await bookMatchedSlot(session.page, config, facility, surface, hit);
+      await notifyBooking(config, `Booked ${hit.date} ${hit.match.label}.`);
       return;
     }
 
@@ -72,7 +85,8 @@ async function main() {
         log("No matching open slot right now.");
         return;
       }
-      await reserve(session.page, config, facility, surface, hit);
+      await bookMatchedSlot(session.page, config, facility, surface, hit);
+      await notifyBooking(config, `Booked ${hit.date} ${hit.match.label}.`);
       return;
     }
 
@@ -87,8 +101,8 @@ async function main() {
           log("Booking settings changed. Applying them on this poll.");
           if (next.bookingUrl !== active.bookingUrl) await ensureLoggedIn(session, next);
           if (next.facilityId !== active.facilityId || next.surface !== active.surface) {
-            const courtTypes = await listCourtTypes(session.page, next.facilityId, next.kind);
-            activeSurface = pickSurface(courtTypes, next.surface);
+            const types = await listCourtTypes(session.page, next.facilityId, next.kind);
+            activeSurface = pickSurface(types, next.surface);
           }
         }
         active = next;
@@ -98,11 +112,12 @@ async function main() {
           if (active.dryRun) {
             if (!announced.has(key)) {
               announced.add(key);
-              await notify(active, `Slot open (dry run): ${key}`);
+              await notifyBooking(active, `Slot open (dry run): ${key}`);
               log("Dry run is on, so nothing was booked. Turn off dry run in settings to reserve it.");
             }
           } else {
-            await reserve(session.page, active, facility, activeSurface, hit);
+            await bookMatchedSlot(session.page, active, facility, activeSurface, hit);
+            await notifyBooking(active, `Booked ${hit.date} ${hit.match.label}.`);
             return;
           }
         }
@@ -151,64 +166,6 @@ async function scan(page, config, facility, surface, { book }) {
   return found;
 }
 
-async function reserve(page, config, facility, surface, hit) {
-  const courts = await listCourts(page, config.facilityId, {
-    date: hit.timestamp,
-    surface: surface.surface,
-    startHour: hit.match.hourStart,
-    hourEnd: hit.match.hourEnd,
-    kind: config.kind,
-  });
-  const court = courts.find((item) => item.available !== false) || courts[0];
-  if (!court?.id) throw new Error("A time matched, but no court was returned.");
-
-  const cards = config.paymentMethod === "card" ? await listCards(page) : [];
-  const card = cards.find((item) => item.default) || cards[0];
-  if (config.paymentMethod === "card" && !card?.id) {
-    throw new Error("No saved card was found. Add one on PlayByPoint or set paymentMethod to prepaid.");
-  }
-
-  const payload = {
-    reservation: {
-      date: hit.date,
-      hour_start: hit.match.hourStart,
-      hour_end: hit.match.hourEnd,
-      reservation_type: config.players,
-      public_game: false,
-      min_ntrp: 1,
-      max_ntrp: 7,
-      kind: config.kind,
-      ntrp_verified: false,
-    },
-    payment: {
-      method: config.paymentMethod,
-      moment: "now",
-      payment_intent_id: "",
-      card_details: card
-        ? { id: card.id, lastFourCardDigits: card.last4, cardBrand: card.brand }
-        : {},
-      coupon: { code: "" },
-    },
-    user_ids: [facility.userId],
-    user_excluded_ids: [],
-    user_ids_guest_names: { player0: { name: null } },
-    reservation_fees: [],
-    users_fees: [],
-    auto_fill_courts: facility.autoFillCourts,
-    free_fare_players: [],
-    guest_pass_users: [],
-    booking_package_applies_to_user_ids: [],
-  };
-
-  log(`Booking court ${court.name || court.id} for ${hit.date} ${hit.match.label} with ${config.paymentMethod}.`);
-  const result = await bookCourt(page, court.id, payload);
-  if (result.status >= 400) {
-    throw new Error(`Booking failed (${result.status}): ${JSON.stringify(result.body)}`);
-  }
-  log(`Booked. Response: ${JSON.stringify(result.body)}`);
-  await notify(config, `Booked ${hit.date} ${hit.match.label}.`);
-}
-
 function facilityForLog(facility) {
   if (!facility) return facility;
   const rest = { ...facility };
@@ -231,7 +188,7 @@ function settingsChanged(previous, next) {
 }
 
 async function waitForConfig() {
-  log("Waiting for a complete booking config. Save it on the settings page.");
+  log("Waiting for a complete booking config on disk.");
   for (;;) {
     try {
       return loadConfig();
@@ -250,16 +207,6 @@ function pickSurface(courtTypes, wanted) {
     return courtTypes[0];
   }
   throw new Error("No court types were returned for this account.");
-}
-
-async function notify(config, message) {
-  log(message);
-  if (!config.notifyWebhook) return;
-  await fetch(config.notifyWebhook, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain" },
-    body: message,
-  }).catch((error) => log(`Notify failed: ${error.message}`));
 }
 
 async function exportSession(config) {
