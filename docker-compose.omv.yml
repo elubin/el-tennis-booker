@@ -1,7 +1,7 @@
 ---
 services:
   el-tennis-booker:
-    image: ghcr.io/alubin620/el-tennis-booker:latest
+    image: ghcr.io/elubin/el-tennis-booker:latest
     container_name: el-tennis-booker
     env_file:
       - /path/to/el-tennis-booker/.env
