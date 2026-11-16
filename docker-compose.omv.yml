@@ -18,4 +18,4 @@ services:
     ports:
       - "8890:8890"
     restart: unless-stopped
-    command: ["sh", "-c", "node src/settings.js & exec node src/index.js watch"]
+    command: ["sh", "-c", "node src/settings.js & exec node src/schedule-pending.js"]

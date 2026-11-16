@@ -3,7 +3,9 @@ FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
     novnc \
@@ -11,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev || npm install --omit=dev
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev || npm install --omit=dev
 RUN npx playwright install --with-deps chromium
 
 COPY src ./src
@@ -38,4 +41,4 @@ RUN chmod +x /docker-entrypoint.sh
 ENV HEADLESS=false
 ENV DISPLAY=:99
 ENTRYPOINT ["/bin/sh", "/docker-entrypoint.sh"]
-CMD ["sh", "-c", "node src/settings.js & exec node src/index.js watch"]
+CMD ["sh", "-c", "node src/settings.js & exec node src/schedule-pending.js"]

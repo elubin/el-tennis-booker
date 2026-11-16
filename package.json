@@ -12,7 +12,8 @@
     "settings": "node src/settings.js",
     "watch": "node src/index.js watch",
     "book": "node src/index.js book",
-    "pending": "node src/index.js pending"
+    "pending": "node src/index.js pending",
+    "schedule": "node src/schedule-pending.js"
   },
   "engines": {
     "node": ">=20"

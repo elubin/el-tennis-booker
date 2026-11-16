@@ -10,7 +10,7 @@ import { materializeStorageFromEnv, encodeStorageFile, STORAGE_PATH } from "./st
 
 const command = process.argv[2] || "check";
 
-const COMMANDS = ["login", "check", "once", "watch", "book", "export-session", "pending"];
+const COMMANDS = ["login", "check", "once", "watch", "book", "export-session", "pending", "schedule"];
 
 async function main() {
   materializeBookingConfigFromEnv();
@@ -21,6 +21,12 @@ async function main() {
     const run = await runPendingBookings();
     log(formatPendingSummary(run));
     if (run.error) process.exitCode = 1;
+    return;
+  }
+
+  if (command === "schedule") {
+    const { startPendingSchedule } = await import("./schedule-pending.js");
+    await startPendingSchedule();
     return;
   }
 

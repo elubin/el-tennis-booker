@@ -1,6 +1,7 @@
 # OpenMediaVault / Portainer: deploy this whole file as a stack.
 # Set PBP_EMAIL and PBP_PASSWORD in the stack Environment (or a .env file next to this compose).
 # On start, creates ./config/booking.config.json from PBP_* env when the file is absent (never overwrites).
+# Booker runs the bocatennisladder queue once per day at PENDING_RUN_AT (default 13:00 Eastern).
 
 services:
   booker:
@@ -13,11 +14,12 @@ services:
       HEADLESS: "true"
       PBP_VERBOSE: "1"
       CONFIG_PATH: /app/config/booking.config.json
+      PENDING_RUN_AT: "${PENDING_RUN_AT:-13:00}"
     volumes:
       - ./config:/app/config
       - ./.auth:/app/.auth
     restart: unless-stopped
-    command: ["node", "src/index.js", "watch"]
+    command: ["node", "src/schedule-pending.js"]
 
   settings:
     build: .
@@ -25,8 +27,10 @@ services:
     env_file:
       - .env
     environment:
+      TZ: America/New_York
       CONFIG_PATH: /app/config/booking.config.json
       SETTINGS_PORT: "8890"
+      PENDING_RUN_AT: "${PENDING_RUN_AT:-13:00}"
     volumes:
       - ./config:/app/config
       - ./.auth:/app/.auth

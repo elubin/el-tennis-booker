@@ -1,7 +1,12 @@
 import { bookingUrlFromInput, openSlots } from "../src/lookup.js";
 import { openSession } from "../src/session.js";
 import { normalizePendingRow } from "../src/playbycourt-api.js";
+import { parsePendingRunAt } from "../src/schedule-pending.js";
 import { requirePartnerName } from "../src/checkout.js";
+
+if (parsePendingRunAt("13:00").hour !== 13 || parsePendingRunAt("15:52").minute !== 52) {
+  throw new Error("parsePendingRunAt mismatch");
+}
 
 const row = normalizePendingRow({
   id: 59,
